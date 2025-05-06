@@ -3,6 +3,7 @@ import { promisify } from 'util'
 import type { CDPSession, Protocol } from 'puppeteer-core'
 // eslint-disable-next-line import/no-unresolved
 import { getUrlPatternRegExp } from './urlPattern.js'
+import zlib from 'zlib'
 
 export { getUrlPatternRegExp }
 
@@ -183,10 +184,34 @@ export class RequestInterceptionManager {
               )
             : await this.#getResponseBody(event)
 
-        const body =
-          base64Encoded && rawBody
-            ? Buffer.from(rawBody, 'base64').toString('utf8')
-            : rawBody
+        let body = rawBody
+
+        const contentEncodingHeader = event.responseHeaders?.find(
+          (header) => header.name.toLowerCase() === 'content-encoding',
+        )
+        if (
+          contentEncodingHeader?.value.toLowerCase().includes('gzip') &&
+          rawBody
+        ) {
+          const buffer = base64Encoded
+            ? Buffer.from(rawBody, 'base64')
+            : Buffer.from(rawBody, 'binary')
+
+          try {
+            const uint8Array = new Uint8Array(buffer)
+
+            body = zlib.gunzipSync(uint8Array).toString('utf8')
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error(
+              'An error occured while trying to decompress gzip body:',
+              error,
+            )
+          }
+        } else if (base64Encoded && rawBody) {
+          body = Buffer.from(rawBody, 'base64').toString('utf8')
+        }
+
         const { delay, ...modification } = (await modifyResponse?.({
           body,
           event,
